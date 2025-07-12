@@ -1,0 +1,375 @@
+# BumperkinzAI_KnowledgeGraph_FederatedLearning.jl
+#
+# Copyright (c) 2023-2025 Daniel Allen Burdick Sr., Piedmont Research Initiative.
+# All rights reserved.
+#
+# SPDX-License-Identifier: LicenseRef-PiedmontResearchInitiative-Proprietary
+#
+# Extension to BumperkinzAI Unified Transcendence System for knowledge graph classification
+# and decentralized federated learning with Unilang Translator for data assimilation.
+#
+# Author: Daniel Allen Burdick Sr. <daniel.burdick.sr@piedmontresearch.org>
+# Version: 6.1.0-FederatedKnowledgeEpoch
+# Date: July 12, 2025
+
+using Logging
+using UUIDs
+using Dates
+using JSON3
+using JSONSchema
+using SHA
+using Random
+using Statistics
+using LinearAlgebra
+using Distributions
+using Base.Threads
+using Distributed
+using Sockets
+using Flux
+using DataStructures
+using HTTP
+using Parameters
+using Zygote # For advanced differentiation and meta-learning
+using CUDAapi # For GPU acceleration and hardware abstraction
+using DataFrames # For robust data manipulation and integration
+using AdaptiveFilters # For advanced signal processing in Edge Data Collection
+using LightGraphs # For knowledge graph representation and inference
+using ReinforcementLearning # For autonomous policy optimization
+using GraphNeuralNetworks # For GNN-based classification
+using CSV
+using RDF # Hypothetical RDF.jl for parsing knowledge graph data (requires actual package if used)
+using PyCall # For interfacing with open-source Python tools if needed
+
+# --- Global Configuration and Legal Attestation ---
+const LOG_FILE = "bumperkinzai_audit_$(Dates.format(now(UTC), "yyyy-mm-dd_HH-MM-SS")).jsonl"
+const LOG_SIGNING_KEY = rand(UInt8, 32) # Cryptographically secure key in production
+const _SHUTDOWN_REQUESTED = Ref{Bool}(false)
+const ENTERPRISE_LEGAL_IP_ATTESTATION = """
+FORMAL LEGAL AND INTELLECTUAL PROPERTY ATTESTATION - PIEDMONT RESEARCH INITIATIVE™ - INTEGRATED FRAMEWORK V6.1
+Founder and Exclusive Rights Holder: Daniel Allen Burdick Sr. (DOB: 1982-05-31), Resident of Missouri.
+Jurisdictional Compliance: Governed by the laws of the State of Missouri and applicable Federal Statutes of the United States of America, including but not limited to, the Missouri Uniform Trade Secrets Act (Mo. Rev. Stat. § 417.450 et seq.), the Missouri Computer Tampering Act (Mo. Rev. Stat. § 569.093 et seq.), and relevant federal legislation such as the Computer Fraud and Abuse Act (18 U.S.C. § 1030). All data acquisition, processing, storage, and dissemination strictly adhere to principles of privacy by design, necessity, and proportionality, consistent with the Fourth Amendment of the U.S. Constitution and applicable data protection regulations.
+Effective Date: July 12, 2025 - This framework is proprietary intellectual property of the Piedmont Research Initiative, fully protected under copyright (17 U.S.C. § 101 et seq.) and trademark law (15 U.S.C. § 1051 et seq.). Any unauthorized reproduction, distribution, reverse engineering, or modification, in whole or in part, without explicit written consent from the exclusive rights holder, is strictly prohibited and subject to the maximum legal penalties available under both civil and criminal law.
+"""
+const ATTESTATION_HASH = bytes2hex(sha256(ENTERPRISE_LEGAL_IP_ATTESTATION))
+const MISSOURI_GEOLOCATION_CONTEXT = Dict(
+    "State" => "Missouri",
+    "County" => "Wayne County", # Presuming Piedmont is in Wayne County for specificity
+    "City" => "Piedmont",
+    "Country" => "USA",
+    "FederalDistrict" => "Eastern District of Missouri"
+)
+const BUMPERKINZAI_UUID = UUID("a1b2c3d4-e5f6-7890-1234-567890abcdef") # As per saved information
+
+# --- Core Types ---
+module CoreTypes
+    using UUIDs, Dates, SHA, Parameters
+    @enum HumanSensorDataType SubjectiveReport PhysiologicalData BehavioralBiometric BioElectromagnetic CognitiveNeuralInterface # Added CognitiveNeuralInterface
+    @enum ConsentStatus ACTIVE REVOKED CUSTOMIZED PENDING_REVIEW # Added PENDING_REVIEW for DLT consent workflow
+    @enum CausalEffectType Direct Indirect Mediating Moderating # For causal inference in Nexus
+    @enum RiskSeverity Trivial Minor Moderate Significant Critical Catastrophic # For Nudge Risk Assessment
+    @enum DataClassificationType Sensitive_PII Confidential_Research Public_Domain_OpenSource Classified_NationalSecurity # Added for KG Classification
+
+    @with_kw struct HumanSensorData
+        timestamp::DateTime = now(UTC)
+        type::HumanSensorDataType
+        value::Vector{UInt8} # Raw or pre-processed sensor data
+        metadata::Dict{String, Any} # Includes sensor_id, collection_protocol, privacy_transformations
+        consent_scopes::Vector{String} # Explicit scopes under DCCC_Consent_Record
+        data_integrity_hash::String = bytes2hex(sha256(value)) # Integrity verification
+        provenance_chain::Vector{UUID} = UUID[] # Chain of processing units
+        data_classification::DataClassificationType = Public_Domain_OpenSource # Default classification
+    end
+
+    @with_kw struct DCCC_Consent_Record
+        record_id::UUID = uuid4()
+        user_pseudonym::String # Hashed user identifier for privacy
+        device_id_hash::String # Hashed device identifier
+        policy_version::String # Reference to the specific legal policy version
+        status::ConsentStatus
+        granted_scopes::Vector{String} # Data categories user consented to
+        revoked_scopes::Vector{String} # Data categories user explicitly revoked
+        timestamp::DateTime = now(UTC) # Timestamp of consent action
+        context_parameters::Dict{String, Any} # Geo-location, device context, IP address hash, etc.
+        digital_signature::String # Cryptographic signature for non-repudiation
+        blockchain_hash::String = "" # Cryptographic hash for DLT immutability
+        validator_nodes::Vector{String} = String[] # Nodes that validated this record
+    end
+
+    @with_kw struct MarketDataPoint
+        id::UUID = uuid4()
+        timestamp::DateTime = now(UTC)
+        asset_class::String # e.g., "Equity", "Commodity", "Cryptocurrency"
+        instrument_id::String # e.g., "AAPL", "XAU", "BTC"
+        value::Float64 # Market value (e.g., price, index level)
+        volume::Float64 = 0.0 # Trading volume
+        sentiment_score::Float64 # Derived market sentiment, clamped [-1.0, 1.0]
+        external_indicators::Dict{String, Any} = Dict{String, Any}() # Macroeconomic, geopolitical
+        data_hash::Vector{UInt8} # Cryptographic hash of the data point for integrity
+        function MarketDataPoint(id, timestamp, asset_class, instrument_id, value, volume, sentiment_score, external_indicators)
+            data_str = "$asset_class:$instrument_id:$value:$volume:$sentiment_score:$timestamp:$external_indicators"
+            data_hash = sha256(data_str)
+            new(id, timestamp, asset_class, instrument_id, value, volume, clamp(sentiment_score, -1.0, 1.0), external_indicators, data_hash)
+        end
+    end
+
+    @with_kw struct PortfolioRecommendation
+        id::UUID = uuid4()
+        timestamp::DateTime = now(UTC)
+        target_asset_class::String
+        target_instrument_id::String
+        recommended_action::String # e.g., "BUY", "SELL", "HOLD", "REBALANCE"
+        recommended_weight::Float64 # Proportion of portfolio, clamped [0.0, 1.0]
+        confidence_score::Float64 # Model confidence in recommendation, clamped [0.0, 1.0]
+        risk_assessment::RiskSeverity = Trivial # Associated risk level
+        causal_factors::Dict{String, Vector{CausalEffectType}} = Dict{String, Vector{CausalEffectType}}() # Explaining recommendation
+        projected_impact::Float64 # Estimated positive impact
+        compliance_check::Bool = true # Adherence to regulatory guidelines
+        originating_nexus_id::UUID # Identifier of the Master Nexus instance generating it
+        function PortfolioRecommendation(id, timestamp, target_asset_class, target_instrument_id, recommended_action, recommended_weight, confidence_score, risk_assessment, causal_factors, projected_impact, compliance_check, originating_nexus_id)
+            new(id, timestamp, target_asset_class, target_instrument_id, recommended_action, clamp(recommended_weight, 0.0, 1.0), clamp(confidence_score, 0.0, 1.0), risk_assessment, causal_factors, projected_impact, compliance_check, originating_nexus_id)
+        end
+    end
+
+    @with_kw struct BlackSwanEventPrediction
+        event_id::UUID = uuid4()
+        timestamp::DateTime = now(UTC)
+        predicted_event_description::String
+        probability::Float64 # Probability of occurrence, clamped [0.0, 1.0]
+        impact_magnitude::Float64 # Estimated impact (e.g., scale of market disruption)
+        detection_confidence::Float64 # Confidence in the prediction
+        antecedent_signals::Vector{String} # Key indicators leading to prediction
+        mitigation_strategies::Vector{String} # Proactive response recommendations
+        model_version::String
+    end
+
+    @with_kw struct CognitiveStateMetric
+        timestamp::DateTime = now(UTC)
+        metric_name::String
+        value::Float64
+        unit::String
+        description::String
+    end
+end
+using .CoreTypes
+
+# --- Security Logging (Enhanced for Auditability and Compliance) ---
+module SecurityLogging
+    using Logging, JSON3, Dates, SHA, ..CoreTypes, ..MISSOURI_GEOLOCATION_CONTEXT, ..BUMPERKINZAI_UUID
+    const LOGGER = Ref{Union{SimpleLogger, Nothing}}(nothing)
+    const AUDIT_STREAM = Ref{Union{IOStream, Nothing}}(nothing)
+    const LOG_QUEUE = Channel{Dict{String, Any}}(5000) # Asynchronous logging queue
+    const LOG_TASK = Ref{Union{Task, Nothing}}(nothing)
+    const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024 # 10 MB per log file before rotation (example)
+
+    function initialize_logger(config::Dict)
+        log_file_path = get(config, "log_file_path", LOG_FILE)
+        audit_log_path = get(config, "audit_log_path", "logs/bumperkinzai_audit.jsonl")
+
+        try
+            LOGGER[] = SimpleLogger(open(log_file_path, "a+"), Logging.Info)
+            AUDIT_STREAM[] = open(audit_log_path, "a+")
+            global_logger(LOGGER[])
+
+            LOG_TASK[] = @async begin
+                while true
+                    entry = take!(LOG_QUEUE)
+                    if entry === :shutdown_signal
+                        break
+                    end
+                    lock(AUDIT_STREAM[].lock) do # Ensure thread-safe writing to audit log
+                        JSON3.write(AUDIT_STREAM[], entry)
+                        write(AUDIT_STREAM[], "\n")
+                        flush(AUDIT_STREAM[])
+                        # Basic log rotation (in a real system, use robust log rotation package)
+                        if position(AUDIT_STREAM[]) > MAX_LOG_SIZE_BYTES
+                            close(AUDIT_STREAM[])
+                            new_audit_log_path = replace(audit_log_path, ".jsonl" => "_$(Dates.format(now(UTC), "yyyy-mm-dd_HH-MM-SS")).jsonl")
+                            AUDIT_STREAM[] = open(new_audit_log_path, "a+")
+                            secure_log(Logging.Info, "Audit log rotated to $new_audit_log_path", event="log_rotation")
+                        end
+                    end
+                end
+            end
+            secure_log(Logging.Info, "Security and Audit logger initialized.", log_level=string(Logging.Info), audit_path=audit_log_path)
+        catch e
+            println(stderr, "ERROR: Failed to initialize loggers: $e")
+            rethrow()
+        end
+    end
+
+    function secure_log(level::LogLevel, message::String; kwargs...)
+        log_entry = Dict{String, Any}(
+            "timestamp" => Dates.format(now(UTC), "yyyy-mm-ddTHH:MM:SS.sssZ"),
+            "level" => string(level),
+            "message" => message,
+            "GeoLocation" => MISSOURI_GEOLOCATION_CONTEXT, # Granular GeoLocation
+            "JURISDICTIONAL_CONTEXT" => "US_Federal_MO_State_Law",
+            "INTERACTING_SYSTEM_ID" => string(BUMPERKINZAI_UUID), # Using the UUID for the system
+            "ComplianceStatus" => "PendingVerification" # Default, updated by Hyper Interoperability Matrix
+        )
+        merge!(log_entry, Dict(kwargs))
+        log_entry["signature"] = bytes2hex(sha256(JSON3.write(log_entry) * string(LOG_SIGNING_KEY))) # Digital signing of log entries
+
+        put!(LOG_QUEUE, log_entry) # Enqueue for asynchronous writing
+        @logmsg level message # Also log to standard Julia logger
+    end
+
+    function shutdown_secure_logger()
+        if !isnothing(LOG_TASK[])
+            put!(LOG_QUEUE, :shutdown_signal) # Send shutdown signal to the async task
+            wait(LOG_TASK[]) # Wait for the task to finish processing remaining logs
+        end
+        if !isnothing(LOGGER[])
+            close(LOGGER[].stream)
+        end
+        if !isnothing(AUDIT_STREAM[])
+            close(AUDIT_STREAM[])
+            secure_log(Logging.Info, "Security and Audit logger shut down.") # This log might not be written if stream is already closed
+        end
+    end
+end
+using .SecurityLogging
+
+# --- Configuration Loading (with Schema Validation and Fallbacks) ---
+module ConfigLoading
+    using JSON3, JSONSchema, TOML, ..SecurityLogging, Parameters
+    @with_kw struct SystemConfig
+        environment::String = "production"
+        log_level::String = "INFO"
+        log_file_path::String = "logs/bumperkinzai_runtime.log"
+        audit_log_path::String = "logs/bumperkinzai_audit.jsonl"
+        audit_channel_buffer_size::Int = 5000
+        thalamus_filter_strength::Float64 = 0.7
+        thalamus_saliency_bias::Dict{String, Float64} = Dict("Visual" => 0.2, "Auditory" => 0.15, "InternalDiagnostic" => 0.3)
+        thalamus_synchronization_model::String = "AdaptiveOscillatorNetwork_v2"
+        thalamus_readiness_decay_rate::Float64 = 0.005
+        primary_cognitive_unit_enabled::Bool = true
+        primary_cognitive_unit_threads::Int = 4
+        primary_cognitive_unit_model_path::String = "models/cognitive_nn_v1.h5"
+        executive_function_unit_enabled::Bool = true
+        executive_function_unit_threads::Int = 2
+        executive_function_unit_model_path::String = "models/executive_logic_engine_v1.xml"
+        memory_retrieval_unit_enabled::Bool = true
+        memory_retrieval_unit_threads::Int = 2
+        memory_retrieval_unit_model_path::String = "models/knowledge_graph_interface_v1.db"
+        edge_collection_adaptive_sampling_interval_ms::Int = 1000
+        edge_collection_enable_bem_sensors::Bool = true
+        edge_collection_enable_behavioral_biometrics::Bool = true
+        edge_collection_privacy_epsilon::Float64 = 1.0
+        neural_interface_enabled::Bool = false # Default to false for cautious deployment
+        neural_interface_protocol::String = "BCI_v3"
+        causal_inference_enabled::Bool = true
+        compliance_engine_strictness::Float64 = 0.95 # Higher value for stricter compliance
+        distributed_compute_nodes::Vector{String} = String[] # List of trusted compute nodes
+        # Knowledge Graph & Federated Learning specific configurations
+        kg_input_dim::Int = 16
+        kg_hidden_dim::Int = 32
+        kg_output_dim::Int = 8 # Number of possible classification labels
+        federated_learning_epochs::Int = 5
+        federated_learning_aggregation_strategy::String = "FedAvg"
+        unilang_translator_api_key::String = "YOUR_UNILANG_API_KEY" # Secure key for external service access
+    end
+
+    function load_config(path::String)::SystemConfig
+        raw_config = Dict{String, Any}()
+        try
+            if endswith(path, ".toml")
+                raw_config = TOML.parsefile(path)
+            elseif endswith(path, ".json")
+                raw_config = JSON3.read(read(path, String))
+            else
+                throw(ErrorException("Unsupported config format: $path"))
+            end
+        catch e
+            secure_log(Logging.Error, "Failed to load config from $path: $e")
+            secure_log(Logging.Warn, "Loading default system configuration due to error.")
+            return SystemConfig()
+        end
+
+        flattened_config = Dict{String, Any}()
+        for (k, v) in raw_config
+            if isa(v, Dict)
+                for (sub_k, sub_v) in v
+                    flattened_config["$(k)_$(sub_k)"] = sub_v
+                end
+            else
+                flattened_config[k] = v
+            end
+        end
+
+        try
+            config = SystemConfig(; flattened_config...)
+            secure_log(Logging.Info, "Configuration loaded and parsed successfully from $path.")
+            return config
+        catch e
+            secure_log(Logging.Error, "Error applying loaded config to SystemConfig struct: $e. Falling back to defaults.")
+            return SystemConfig()
+        end
+    end
+
+    function validate_config_with_schema(config::Dict, schema_path::String)::Bool
+        try
+            schema_content = JSON3.read(read(schema_path, String))
+            schema = JSONSchema.Schema(schema_content)
+            is_valid = JSONSchema.isvalid(config, schema)
+            if !is_valid
+                secure_log(Logging.Error, "Configuration validation failed against schema $schema_path.")
+            else
+                secure_log(Logging.Info, "Configuration validated successfully against schema $schema_path.")
+            end
+            return is_valid
+        catch e
+            secure_log(Logging.Error, "Config schema validation process failed: $e")
+            return false
+        end
+    end
+end
+using .ConfigLoading
+
+# --- Distributed DLT Interface (Enhanced for Consensus and Immutability) ---
+module DLTInterface
+    using ..UUIDs, ..Dates, ..SHA, ..JSON3, ..CoreTypes, ..SecurityLogging, ..Distributed, DataStructures
+    const DLT_CONSENT_RECORDS = Dict{UUID, DCCC_Consent_Record}() # Local cache of records
+    const DLT_BLOCKCHAIN = OrderedDict{String, Vector{DCCC_Consent_Record}}() # Simplified blockchain for immutability
+    const DLT_LOCK = ReentrantLock()
+    const DLT_CONSENSUS_THRESHOLD = 0.67 # 2/3 majority for record validation in a distributed network
+
+    function validate_digital_signature(record::DCCC_Consent_Record, public_key::String)::Bool
+        try
+            data_payload = Dict(
+                "record_id" => string(record.record_id),
+                "user_pseudonym" => record.user_pseudonym,
+                "device_id_hash" => record.device_id_hash,
+                "policy_version" => record.policy_version,
+                "status" => string(record.status),
+                "granted_scopes" => record.granted_scopes,
+                "revoked_scopes" => record.revoked_scopes,
+                "timestamp" => record.timestamp
+            )
+            expected_signature_hash = bytes2hex(sha256(JSON3.write(data_payload))) # Simple hash for mock signature
+            is_valid = record.digital_signature == expected_signature_hash
+            secure_log(Logging.Debug, "Signature validation: $is_valid for record $(record.record_id)")
+            return is_valid
+        catch e
+            secure_log(Logging.Error, "Signature validation failed: $e", record_id=string(record.record_id), stacktrace=stacktrace(catch_backtrace()))
+            return false
+        end
+    end
+
+    function achieve_consensus(record::DCCC_Consent_Record, validator_public_keys::Vector{String})::Bool
+        total_validators = length(validator_public_keys)
+        if total_validators == 0
+            secure_log(Logging.Warn, "No validators specified for DLT consensus. Record will be stored without full consensus.")
+            return true # No consensus needed if no validators
+        end
+
+        votes_for_validity = 0
+        for pk in validator_public_keys
+            if validate_digital_signature(record, pk)
+                votes_for_validity += 1
+            else
+                secure_log(Logging.Warn, "Validator $pk rejected record $(record.record_id) during consensus.")
+            end
+        end
+        consensus_achieved = (votes_for_validity / total_validators) >= DLT_CONSENSUS_THRESHOLD
+        secure_log(Logging.Info, "Consensus for record $(record.record_id): $
